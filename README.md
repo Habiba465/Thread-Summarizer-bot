@@ -5,5 +5,3 @@ What i am planning to do
 a command like /summarizePls will send the whole thread to an AI probably gemini flash as it's for free or i could use ai.hackclub.com
 
 That's it simply!
-
-# Thread-Summarizer-bot
