@@ -6,3 +6,4 @@ a command like /summarizePls will send the whole thread to an AI probably gemini
 
 That's it simply!
 
+# Thread-Summarizer-bot
