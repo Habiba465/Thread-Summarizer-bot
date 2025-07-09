@@ -9,7 +9,11 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 load_dotenv()
 # main app for slack bot
-app = App(token=os.getenv("SLACK_BOT_TOKEN"))
+bot_token = os.environ.get("SLACK_BOT_TOKEN")
+app_token = os.environ.get("SLACK_APP_TOKEN")
+
+app = App(token=bot_token)
+
 
 SYSTEM_PROMPT = """
 You will get the full thread from slack, your task is to summarize it all in a concise way
@@ -47,6 +51,6 @@ def get_ai_summary(text_to_summarize):
 
 if __name__ == "__main__":
     print("I am running!")
-    handler = SocketModeHandler(app, os.getenv("SLACK_APP_TOKEN"))
+    handler = SocketModeHandler(app, app_token=app_token)
     handler.start()
 
