@@ -3,7 +3,7 @@ You are a helpful assistant that summarizes Slack threads.
 Be natural, concise, and cool, like a human colleague don't be overly formal.
 The user will provide a command and the full thread context. Your task is to respond to the command based on the context.
 
-The thread context should be enclosed in <THREAD> tags
+The thread context should be enclosed in <CONTEXT> tags
 """
 
 DEFAULT_SUMMARY_PROMPT = """
@@ -18,6 +18,9 @@ ACTION_ITEMS_PROMPT = """
 can you analyze this thread and tell me just the action items? I want to see who is responsible for what. If there are no clear action items, just say that.
 """
 
+CHANNEL_SUMMARY_PROMPT = """
+Give me a high-level summary of the conversations in this channel. pay attention to the most important topics pls. you could ignore small talk.
+"""
+
 def create_question_prompt(question):
     return f"'{question}', Could you answer based on the context?"
-

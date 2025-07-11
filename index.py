@@ -7,49 +7,70 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 # the functions are organized into seprate files for easier devlopment
 from ai_service import fetch_ai_response
+from time_utils import parse_time_argument
+from slack_utils import fetch_channel_history, fetch_formatted_thread
 from parser import parse_command_text
 import prompts
 
 load_dotenv()
 
-
 app = App(token=os.getenv("SLACK_BOT_TOKEN"))
-
-def fetch_formatted_thread(client, channel_id, thread_ts):
-    try:
-        result = client.conversations_replies(channel=channel_id, ts=thread_ts)
-        messages = result.get('messages', [])
-        
-        if not messages:
-            return None
-
-        user_cache = {}
-        formatted_messages = []
-
-        for msg in messages:
-            user_id = msg.get('user')
-            if user_id not in user_cache:
-                try:
-                    user_info = client.users_info(user=user_id)
-                    user_cache[user_id] = user_info['user']['real_name']
-                except Exception:
-                    user_cache[user_id] = "An unknown user"
-            
-            user_name = user_cache[user_id]
-            text = msg.get('text', '').strip()
-
-            if text:
-                formatted_messages.append(f"{user_name}: {text}")
-        
-        return "\n".join(formatted_messages)
-
-    except Exception as e:
-        print(f"Error fetching thread: {e}")
-        return None
 
 def get_command_from_mention(text):
     """Removes the bot's mention from the text to just get the command."""
     return re.sub(r'<@U[A-Z0-9]+>\s*', '', text).strip()
+
+
+@app.command("/summarize")
+def handle_channel_summary(ack, body, client, say, logger):
+    ack()
+    
+    channel_id = body['channel_id']
+    user_command = body.get('text', 'last:24h') # Default is last 24h
+
+    oldest_ts = parse_time_argument(user_command)
+
+    if not oldest_ts:
+        say(
+            text="Sorry, I didn't get that time format. Try something like `last:24h`, `last:3d`, or `since:monday`.",
+            response_type="ephemeral"
+        )
+        return
+
+    initial_response = say(text=f"Hey! I'm summarizing this channel's activity from `{user_command}`")
+    thread_ts_for_reply = initial_response['ts']
+    
+    try:
+        channel_context = fetch_channel_history(client, channel_id, oldest_ts)
+
+        if not channel_context or channel_context.strip() == "":
+            say(
+                text="I looked, but there for the given timeframe, I can't see any messages",
+                thread_ts=thread_ts_for_reply
+            )
+            return
+
+        summary = fetch_ai_response(
+            system_prompt=prompts.BASE_SYSTEM_PROMPT,
+            user_prompt=prompts.CHANNEL_SUMMARY_PROMPT,
+            thread_context=channel_context
+        )
+
+        client.chat_update(
+            channel=channel_id,
+            ts=thread_ts_for_reply,
+            text=f"*Here's a summary for `{user_command}`:*\n\n{summary}"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /summarize command: {e}")
+        client.chat_update(
+            channel=channel_id,
+            ts=thread_ts_for_reply,
+            text=f"Yikes, something went wrong on my end. Sorry about that. `Error: {e}`"
+        )
+
+
 
 
 
