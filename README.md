@@ -1,7 +1,11 @@
-I got an idea of a slack bot, it should summarize any thread and if you react with 🤔 it will summarize it too
+This is a slack bot that when you mention it in any thread it will summarize it, you could also ask a question or choose a style!
 
-What i am planning to do
+Just mention it and it will send the whole thread to an ai.hackclub.com
 
-a command like /summarizePls will send the whole thread to an AI probably gemini flash as it's for free or i could use ai.hackclub.com
+You can also use these commands
+
+@ThreadSummarizer style:bulletpoints for a bullet list style.
+@ThreadSummarizer style:actionitems for actionable things mentioned in the thread.
+@ThreadSummarizer question:"What was the final decision?" to ask anything about the thread.
 
 That's it simply!

@@ -1,112 +1,119 @@
-import requests
-import json
 from dotenv import load_dotenv
 import os
-
-# slack necssary imports, using socket mode for development only
+import re
+# slack imports
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+# the functions are organized into seprate files for easier devlopment
+from ai_service import fetch_ai_response
+from parser import parse_command_text
+import prompts
+
 load_dotenv()
-# main app for slack bot
-bot_token = os.getenv("SLACK_BOT_TOKEN")
-app_token = os.getenv("SLACK_APP_TOKEN")
 
-app = App(token=bot_token)
 
-SYSTEM_PROMPT = """
-You will get the full thread from slack, your task is to summarize it all in a concise way
-Also explain it in your way and don't write overly polish respones and be natural just as a human would do 
-remeber be cool!
-<THREAD>
-"""
+app = App(token=os.getenv("SLACK_BOT_TOKEN"))
 
-def get_ai_summary(text_to_summarize):
-    """send the thread text to the ai.hackclub.com and returns the full summary"""
-    url = "https://ai.hackclub.com/chat/completions"
-    headers = {"Content-Type": "application/json"}
-        
-    payload = {
-        "messages": [
-            {"role": "user", "content": SYSTEM_PROMPT+text_to_summarize+ "</THREAD>"}
-        ]
-    }
-
+def fetch_formatted_thread(client, channel_id, thread_ts):
     try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
-        response.raise_for_status()
+        result = client.conversations_replies(channel=channel_id, ts=thread_ts)
+        messages = result.get('messages', [])
         
-        data = response.json()
-        summary = data['choices'][0]['message']['content']
-        return summary
+        if not messages:
+            return None
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error calling AI API: {e}")
-        return "Sorry, something went wrong, try again later."
+        user_cache = {}
+        formatted_messages = []
 
-    except (KeyError, IndexError) as e:
-        print(f"Error parsing AI response: {e}")
-        return "Sorry, something went wrong, try again later."
+        for msg in messages:
+            user_id = msg.get('user')
+            if user_id not in user_cache:
+                try:
+                    user_info = client.users_info(user=user_id)
+                    user_cache[user_id] = user_info['user']['real_name']
+                except Exception:
+                    user_cache[user_id] = "An unknown user"
+            
+            user_name = user_cache[user_id]
+            text = msg.get('text', '').strip()
+
+            if text:
+                formatted_messages.append(f"{user_name}: {text}")
+        
+        return "\n".join(formatted_messages)
+
+    except Exception as e:
+        print(f"Error fetching thread: {e}")
+        return None
+
+def get_command_from_mention(text):
+    """Removes the bot's mention from the text to just get the command."""
+    return re.sub(r'<@U[A-Z0-9]+>\s*', '', text).strip()
+
 
 
 @app.event("app_mention")
-def handle_app_mention(event, say, client):
-    
-    if 'thread_ts' in event:
+def handle_app_mention(event, say, client, logger):
+    thread_ts = event.get('thread_ts')
+    channel_id = event['channel']
 
-        channel_id = event['channel']
-        thread_ts = event['thread_ts']
 
-        try:
-            say(text="Got it! I am reading this thread, a summary will appear soon", thread_ts=thread_ts)
-
-            result = client.conversations_replies(channel=channel_id, ts=thread_ts)
-            messages = result.get('messages', [])
-
-            if not messages:
-                say(text="I couldn't find any messages in this thread to summarize.", thread_ts=thread_ts)
-                return
-
-            formatted_thread = []
-            user_cache = {}
-            for msg in messages:
-                user_id = msg.get('user')
-                if user_id not in user_cache:
-                    try:
-                        user_info = client.users_info(user=user_id)
-                        user_cache[user_id] = user_info['user']['real_name']
-                    except Exception:
-                        user_cache[user_id] = "An unknown user"
-                
-                user_name = user_cache[user_id]
-                text = msg['text']
-                text = text.replace(f"<@{event['user']}>", "").strip()
-                if text: 
-                    formatted_thread.append(f"{user_name}: {text}")
-            
-            thread_text_to_summarize = "\n".join(formatted_thread)
-
-            if not thread_text_to_summarize:
-                say(text="Looks like this thread is empty or only contains my mention. there's nothing to summarize", thread_ts=thread_ts)
-                return
-
-            summary = get_ai_summary(thread_text_to_summarize)
-
-            say(text=f"*Here's a summary of this thread:*\n\n{summary}", thread_ts=thread_ts)
-
-        except Exception as e:
-            print(f"Error handling mention in thread: {e}")
-            say(
-                text=f"Oops, something went wrong while processing the summary. `Error: {e}`",
-                thread_ts=thread_ts
-            )
-    else:
+    if not thread_ts:
         say(
-            text="Hello! to summarize a thread, please mention me (`@ThreadSummarizer`) in a thread"
+            text="Hey! I work only in threads till now (open a thread and try again).",
+            ephemeral=True
         )
+        return
+
+    try:
+        say(text="Got it! reading the thread now, one sec", thread_ts=thread_ts)
+
+        thread_context = fetch_formatted_thread(client, channel_id, thread_ts)
+
+        if not thread_context:
+            say(text="Looks like this thread is empty", thread_ts=thread_ts)
+            return
+
+        user_command = get_command_from_mention(event['text'])
+        command_type, value = parse_command_text(user_command)
+
+        if command_type == 'style' and value == 'bulletpoints':
+            user_prompt = prompts.BULLET_POINTS_PROMPT
+        elif command_type == 'style' and value == 'actionitems':
+            user_prompt = prompts.ACTION_ITEMS_PROMPT
+        elif command_type == 'question':
+            user_prompt = prompts.create_question_prompt(value)
+        else:
+            user_prompt = prompts.DEFAULT_SUMMARY_PROMPT
+        
+        summary = fetch_ai_response(
+            system_prompt=prompts.BASE_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            thread_context=thread_context
+        )
+        
+        say(text=f"*Here's the summary:*\n\n{summary}", thread_ts=thread_ts)
+
+    except Exception as e:
+        logger.error(f"Error in /summarize command: {e}")
+        say(
+            text=f"Yikes, something went wrong. Sorry about that. `Error: {e}`",
+            thread_ts=thread_ts
+        )
+
+
+@app.event("app_mention")
+def handle_app_mention(event, say):
+    if 'thread_ts' not in event:
+        say(
+            text="Hey! To get a summary, go into a thread and use the `/summarize` command."
+        )
+
 
 if __name__ == "__main__":
     print("I am running!")
+    app_token = os.getenv("SLACK_APP_TOKEN")
     handler = SocketModeHandler(app, app_token=app_token)
     handler.start()
 
